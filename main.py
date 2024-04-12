@@ -1,94 +1,102 @@
+from numba import njit, jit, boolean
 from scipy.optimize import linprog
 
+@njit("float(f8[:,:],f8[:,:],f8[:,:],f8[:,:],f8[:,:],f8[:,:])")
+def optimize(c, A_eq=None, b_eq=None, A_ineq=None, b_ineq=None, bounds=None):
+    N = len(c)
+    M_eq = 0 if b_eq is None else len(b_eq)
+    M_ineq = 0 if b_ineq is None else len(b_ineq)
+    M = M_eq + M_ineq
+    bounds = bounds if bounds else [(None, None) * N]
+    sol = linprog(c, A_eq=A_eq, b_eq=b_eq, A_ub=A_ineq, b_ub=b_ineq, bounds=bounds)
+    x = sol.x
+    return x
 
-class LinearProblem:
-    def __init__(self, c, A_eq=None, b_eq=None, A_ineq=None, b_ineq=None, bounds=None):
-        self.c = c
-        self.A_eq = A_eq
-        self.b_eq = b_eq
-        self.A_ineq = A_ineq
-        self.b_ineq = b_ineq
-        self.bounds = bounds if bounds else [(None, None) * len(A[0])]
-        
-        self.N_eq = 0 if self.b_eq is None else len(self.b_eq)
-        self.N_ineq = 0 if self.b_ineq is None else len(self.b_ineq)
-        self.N = self.N_eq + self.N_ineq
-        
-    def optimize(self):
-        self.sol = linprog(self.c, A_eq=self.A_eq, b_eq=self.b_eq, A_ub=self.A_ineq, b_ub=self.b_ineq, bounds=self.bounds)
-        
-    def copy(self):
-        return *self.copy_eq(), *self.copy_ineq()
+
+@jit
+def copy(A_eq, b_eq, A_ineq, b_ineq):
+    return *copy_eq(A_eq, b_eq), *copy_ineq(A_ineq, b_ineq)
+
+@jit
+def copy_eq(A_eq, b_eq):
+    if b_eq is None:
+        return None, None
+    else:
+        return A_eq.copy(), b_eq.copy()
+
+
+@jit
+def copy_ineq(A_ineq, b_ineq):
+    if b_ineq is None:
+        return None, None
+    else:
+        return A_ineq.copy(), b_ineq.copy()
+
+
+@jit
+def iis(c, A_eq=None, B_eq=None, A_ineq=None, B_ineq=None, bounds=None):
+    N = len(c)
+    M_eq = 0 if B_eq is None else len(B_eq)
+    M_ineq = 0 if B_ineq is None else len(B_ineq)
+    M = M_eq + M_ineq
+    bounds = bounds if bounds else [(None, None) for _ in range(N)]
     
-    def copy_eq(self):
-        if self.b_eq is None:
-            return None, None
-        else:
-            return self.A_eq.copy(), self.b_eq.copy()
+    x = optimize(c, A_eq, B_eq, A_ineq, B_ineq, bounds)
+    if x is not None:
+        print("Solution already feasible")
+        return 
+    else:
+        iis = []
+        
+        for i in range(M):
+            
+            a_eq, b_eq, a_ineq, b_ineq = copy(A_eq, B_eq, A_ineq, B_ineq)
+            
+            if i < M_eq:
+                del a_eq[i]
+                del b_eq[i]
+            else:
+                del a_ineq[i]
+                del b_ineq[i]
+            
+            x = optimize(c, a_eq, b_eq, a_ineq, b_ineq, bounds)
+            if x is not None:
+                iis += [i]
+            
+        return iis
+    
 
-    def copy_ineq(self):
-        if self.b_ineq is None:
-            return None, None
-        else:
-            return self.A_ineq.copy(), self.b_ineq.copy()
-
-    def iis(self):
-        self.optimize()
-        if self.sol.success:
-            print("Solution already feasible")
-            print(self.sol)
-            return 
-        else:
-            iis = []
             
-            for i in range(self.N):
+# def iis2(self):
+    # self.optimize()
+    # if self.sol.success:
+        # print("Solution already feasible")
+        # print(self.sol)
+        # return
+    # else:
+        # iis = []
+        
+        # for i in range(self.N - 1):
+            # for j in range(i + 1, self.N):
+                # A_eq, b_eq, A_ineq, b_ineq = self.copy()
                 
-                A_eq, b_eq, A_ineq, b_ineq = self.copy()
+                # if i < self.N_eq:
+                    # del A_eq[j]
+                    # del b_eq[j]
+                    # del A_eq[i]
+                    # del b_eq[i]
+                # else:
+                    # del A_ineq[j]
+                    # del b_ineq[j]
+                    # del A_ineq[i]
+                    # del b_ineq[i]
                 
-                if i < self.N_eq:
-                    del A_eq[i]
-                    del b_eq[i]
-                else:
-                    del A_ineq[i]
-                    del b_ineq[i]
-                
-                subproblem = LinearProblem(self.c, A_eq, b_eq, A_ineq, b_ineq, self.bounds)
-                subproblem.optimize()
-                if subproblem.sol.success:
-                    iis += [i]
-                
-            return iis
-            
-    def iis2(self):
-        self.optimize()
-        if self.sol.success:
-            print("Solution already feasible")
-            print(self.sol)
-            return
-        else:
-            iis = []
-            
-            for i in range(self.N - 1):
-                for j in range(i + 1, self.N):
-                    A_eq, b_eq, A_ineq, b_ineq = self.copy()
-                    
-                    if i < self.N_eq:
-                        del A_eq[j]
-                        del b_eq[j]
-                        del A_eq[i]
-                        del b_eq[i]
-                    else:
-                        del A_ineq[j]
-                        del b_ineq[j]
-                        del A_ineq[i]
-                        del b_ineq[i]
-                    
-                    subproblem = LinearProblem(self.c, A_eq, b_eq, A_ineq, b_ineq, self.bounds)
-                    subproblem.optimize()
-                    if subproblem.sol.success:
-                        iis += [(i, j)]
-            
-            return iis
+                # subproblem = LinearProblem(self.c, A_eq, b_eq, A_ineq, b_ineq, self.bounds)
+                # subproblem.optimize()
+                # if subproblem.sol.success:
+                    # iis += [(i, j)]
+        
+        # return iis
 
 
 if __name__ == "__main__":
@@ -114,7 +122,7 @@ if __name__ == "__main__":
     
     bounds = [(0, None) for _ in range(N)]
 
-    lp = LinearProblem(c.tolist(), A.tolist(), b.tolist(), bounds=bounds)
-    iis = lp.iis()
+    #lp = LinearProblem(c.tolist(), A.tolist(), b.tolist(), bounds=bounds)
+    iis = iis(c.tolist(), A.tolist(), b.tolist(), bounds=bounds)
 
     print(iis)
